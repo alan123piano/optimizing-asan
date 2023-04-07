@@ -3,6 +3,6 @@
 int main()
 {
     int *x = nullptr;
-    printf("hello world. Magic number: %d\n", *x);
+    printf("hello world. magic number: %d\n", *x);
     return 0;
 }
