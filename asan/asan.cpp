@@ -1,6 +1,7 @@
 #include "llvm/Pass.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
 
@@ -19,8 +20,18 @@ namespace
             errs() << M.getName() << '\n';
 
             ModuleAnalysisManager MAM;
-            PassManager<Module> PM;
+	    LoopAnalysisManager LAM;
+	    FunctionAnalysisManager FAM;
+	    CGSCCAnalysisManager CGAM;
 
+	    PassBuilder PB;
+	    PB.registerModuleAnalyses(MAM);
+	    PB.registerCGSCCAnalyses(CGAM);
+	    PB.registerFunctionAnalyses(FAM);
+	    PB.registerLoopAnalyses(LAM);
+	    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+            
+	    ModulePassManager PM = PB.buildPerModuleDefaultPipeline(OptimizationLevel::O2);
             PM.addPass(ModuleAddressSanitizerPass(AddressSanitizerOptions()));
             PM.run(M, MAM);
 
