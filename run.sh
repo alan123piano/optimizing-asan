@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -Eeuo pipefail
+#set -Eeuo pipefail
 
 case "$1" in
     "pass") # build passes
@@ -11,10 +11,11 @@ case "$1" in
         ;;
     "opt") # run LLVM passes using opt
         clang -emit-llvm hello.cpp -c -o - |
-        # opt -enable-new-pm=0 -load build/mypass/LLVMPJT_MYPASS.so -hello |
+        opt -enable-new-pm=0 -load build/mypass/LLVMPJT_MYPASS.so -hello |
         opt -enable-new-pm=0 -load build/asan/LLVMPJT_ASAN.so -asan |
-        llvm-dis -o -
-        # clang -x ir - -o hello -g
+        #llvm-dis -o -
+        clang -x ir - -o hello -g -fsanitize=address
+	#Apparently we still need -fsanitize=address so that clang still understands asan details
         ;;
     *)
         echo "Invalid usage"
