@@ -14,7 +14,7 @@ case "$1" in
         opt -enable-new-pm=0 -load build/mypass/LLVMPJT_MYPASS.so -hello |
         opt -enable-new-pm=0 -load build/asan/LLVMPJT_ASAN.so -asan |
         #llvm-dis -o -
-        clang -x ir - -o hello -g -fsanitize=address
+        clang -lasan -x ir - -o hello #-fsanitize=address
 	#Apparently we still need -fsanitize=address so that clang still understands asan details
         ;;
     *)

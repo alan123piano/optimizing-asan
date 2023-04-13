@@ -2,8 +2,7 @@
 
 int main()
 {
-    // induce a segfault
-    int *x = nullptr;
-    printf("hello world. magic number: %d\n", *x);
+    char x[2];
+    printf("hello world. magic number: %d\n", x[3]);
     return 0;
 }
