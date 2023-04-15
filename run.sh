@@ -1,20 +1,48 @@
 #!/bin/bash
 
-#set -Eeuo pipefail
+set -Eeuo pipefail
+
+# b = view LLVM bytecode
+# o = run OptimizeASan pass
+VIEW_BYTECODE=0
+RUN_OPT_ASAN=0
+while getopts "bao" opt; do
+    case $opt in
+        b)
+            VIEW_BYTECODE=1
+            ;;
+        o)
+            RUN_OPT_ASAN=1
+            ;;
+    esac
+done
+
+shift $((OPTIND - 1))
+
+echo $VIEW_BYTECODE
+echo $RUN_OPT_ASAN
 
 case "$1" in
-    "pass") # build passes
+    "build") # build LLVM passes
         cmake -B build
         cd build
         cmake ..
         cmake --build .
         ;;
-    "opt") # run LLVM passes using opt
-        clang -emit-llvm $2.cpp -c -o - |
-        opt -enable-new-pm=0 -load build/mypass/LLVMPJT_OPTIMIZE_ASAN.so -optimize_asan |
-        opt -enable-new-pm=0 -load build/asan/LLVMPJT_ASAN.so -asan |
-        # llvm-dis -o -
-        clang -lasan -x ir - -o $2
+    "test")
+        clang -emit-llvm $2.cpp -c -o $2.llvmbc
+        if [ "$RUN_OPT_ASAN" -eq 1 ]; then
+            opt -enable-new-pm=0 -load build/optimize_asan/LLVMPJT_OPTIMIZE_ASAN.so -optimize_asan < $2.llvmbc > $2.out.llvmbc
+            mv $2.out.llvmbc $2.llvmbc
+        fi
+        opt -enable-new-pm=0 -load build/asan/LLVMPJT_ASAN.so -asan < $2.llvmbc > $2.out.llvmbc
+        mv $2.out.llvmbc $2.llvmbc
+        if [ "$VIEW_BYTECODE" -eq 1 ]; then
+            llvm-dis $2.llvmbc -o -
+        else
+            clang -lasan -x ir $2.llvmbc -o $2.exe
+            time ./$2.exe > /dev/null
+        fi
         ;;
     *)
         echo "Invalid usage"

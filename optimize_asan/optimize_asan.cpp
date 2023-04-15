@@ -15,7 +15,7 @@ namespace
 
         bool runOnFunction(Function &F) override
         {
-            errs() << "Running ASan pass on ";
+            errs() << "Running OptimizeASan pass on ";
             errs().write_escaped(F.getName()) << '\n';
 
             // block sanitization on everything
@@ -29,11 +29,6 @@ namespace
                     Inst.setMetadata(LLVMContext::MD_nosanitize, nosanitize);
                 }
             }
-
-            /* FunctionAnalysisManager FAM;
-            PassManager<Function> PM;
-
-            PM.run(F, FAM); */
 
             return true;
         }
