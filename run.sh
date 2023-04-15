@@ -19,9 +19,6 @@ done
 
 shift $((OPTIND - 1))
 
-echo $VIEW_BYTECODE
-echo $RUN_OPT_ASAN
-
 case "$1" in
     "build") # build LLVM passes
         cmake -B build
