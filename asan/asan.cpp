@@ -4,6 +4,7 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
+#include "llvm/Transforms/Instrumentation/SanitizerCoverage.h"
 
 using namespace llvm;
 
@@ -19,6 +20,11 @@ namespace
             errs() << "hello world" << '\n';
             errs() << M.getName() << '\n';
 
+            for (Function &F : M)
+            {
+                F.addFnAttr(Attribute::SanitizeAddress);
+            }
+
             ModuleAnalysisManager MAM;
             LoopAnalysisManager LAM;
             FunctionAnalysisManager FAM;
@@ -31,9 +37,10 @@ namespace
             PB.registerLoopAnalyses(LAM);
             PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
-            ModulePassManager PM = PB.buildPerModuleDefaultPipeline(OptimizationLevel::O2);
-            PM.addPass(ModuleAddressSanitizerPass(AddressSanitizerOptions()));
-            PM.run(M, MAM);
+            ModulePassManager MPM;
+            MPM.addPass(ModuleSanitizerCoveragePass());
+            MPM.addPass(ModuleAddressSanitizerPass(AddressSanitizerOptions(), false));
+            MPM.run(M, MAM);
 
             return true;
         }

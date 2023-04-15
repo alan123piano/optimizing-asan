@@ -8,10 +8,10 @@ using namespace llvm;
 
 namespace
 {
-    struct Hello : public FunctionPass
+    struct OptimizeASan : public FunctionPass
     {
         static char ID;
-        Hello() : FunctionPass(ID) {}
+        OptimizeASan() : FunctionPass(ID) {}
 
         bool runOnFunction(Function &F) override
         {
@@ -40,5 +40,5 @@ namespace
     };
 }
 
-char Hello::ID = 0;
-static RegisterPass<Hello> X("mypass", "Custom Pass", false, false);
+char OptimizeASan::ID = 0;
+static RegisterPass<OptimizeASan> X("optimize_asan", "Optimize ASan", false, false);
