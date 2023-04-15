@@ -20,18 +20,18 @@ namespace
             errs() << M.getName() << '\n';
 
             ModuleAnalysisManager MAM;
-	    LoopAnalysisManager LAM;
-	    FunctionAnalysisManager FAM;
-	    CGSCCAnalysisManager CGAM;
+            LoopAnalysisManager LAM;
+            FunctionAnalysisManager FAM;
+            CGSCCAnalysisManager CGAM;
 
-	    PassBuilder PB;
-	    PB.registerModuleAnalyses(MAM);
-	    PB.registerCGSCCAnalyses(CGAM);
-	    PB.registerFunctionAnalyses(FAM);
-	    PB.registerLoopAnalyses(LAM);
-	    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-            
-	    ModulePassManager PM = PB.buildPerModuleDefaultPipeline(OptimizationLevel::O2);
+            PassBuilder PB;
+            PB.registerModuleAnalyses(MAM);
+            PB.registerCGSCCAnalyses(CGAM);
+            PB.registerFunctionAnalyses(FAM);
+            PB.registerLoopAnalyses(LAM);
+            PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+            ModulePassManager PM = PB.buildPerModuleDefaultPipeline(OptimizationLevel::O2);
             PM.addPass(ModuleAddressSanitizerPass(AddressSanitizerOptions()));
             PM.run(M, MAM);
 

@@ -41,4 +41,4 @@ namespace
 }
 
 char Hello::ID = 0;
-static RegisterPass<Hello> X("hello", "Hello World Pass", false, false);
+static RegisterPass<Hello> X("mypass", "Custom Pass", false, false);
