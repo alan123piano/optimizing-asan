@@ -17,9 +17,6 @@ namespace
 
         bool runOnModule(Module &M) override
         {
-            errs() << "hello world" << '\n';
-            errs() << M.getName() << '\n';
-
             for (Function &F : M)
             {
                 F.addFnAttr(Attribute::SanitizeAddress);
