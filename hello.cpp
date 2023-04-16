@@ -1,11 +1,19 @@
 #include <stdio.h>
 
+void set_ptr(int *ptr)
+{
+    // set_ptr top
+    *ptr = 10;
+    if (*ptr % 2 == 0)
+    {
+        // set_ptr branch
+        *ptr = 11;
+    }
+}
+
 int main()
 {
-    char x[2] = {'a', 'b'};
-    for (int i = 0; i < 100000; ++i)
-    {
-        printf("hello world. magic number: %d\n", x[0]);
-    }
+    int *num = new int(5);
+    set_ptr(num);
     return 0;
 }

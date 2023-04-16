@@ -1,33 +1,74 @@
+#include <unordered_set>
+#include <unordered_map>
 #include "llvm/Pass.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
-#include "llvm/Support/raw_ostream.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
+#include "llvm/Analysis/AliasSetTracker.h"
+#include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/LoopInfo.h"
 
 using namespace llvm;
 
 namespace
 {
-    struct OptimizeASan : public FunctionPass
+    struct OptimizeASan : public ModulePass
     {
         static char ID;
-        OptimizeASan() : FunctionPass(ID) {}
+        OptimizeASan() : ModulePass(ID) {}
 
-        bool runOnFunction(Function &F) override
+        void getAnalysisUsage(AnalysisUsage &AU) const override
         {
-            errs() << "Running OptimizeASan pass on ";
-            errs().write_escaped(F.getName()) << '\n';
+            // Add analysis passes
+            AU.addRequired<BasicAAWrapperPass>();
+            AU.addRequired<LoopInfoWrapperPass>(); // TODO: try to cleverly hoist instrumentation from loops
+        }
 
-            // block sanitization on everything
-            for (BasicBlock &BB : F)
+        bool runOnModule(Module &M) override
+        {
+            for (Function &F : M)
             {
-                for (Instruction &Inst : BB)
+                errs() << "Running OptimizeASan pass on ";
+                errs().write_escaped(F.getName()) << '\n';
+
+                BasicAAResult &basicAAResult = getAnalysis<BasicAAWrapperPass>().getResult();
+                AliasSetTracker aliasSetTracker();
+
+                // https://github.com/google/sanitizers/wiki/AddressSanitizerCompileTimeOptimizations
+
+                // loop through aliasSetTracker sets
+                /*
+                for (const auto &AS : aliasSetTracker)
                 {
-                    LLVMContext &context = Inst.getContext();
-                    Inst.hasMetadata();
-                    MDNode *nosanitize = MDNode::get(context, MDString::get(context, "nosanitize"));
-                    Inst.setMetadata(LLVMContext::MD_nosanitize, nosanitize);
+                    // find the pre-dominator for all aliased instructions
+                    // insert a dummy load into predom to trigger instrumentation
+                    // disable instrumentation on subsequent instructions
                 }
+                */
+
+                /*
+                LoopInfoWrapperPass &LIWP = getAnalysis<LoopInfoWrapperPass>(F);
+                LoopInfo &LI = LIWP.getLoopInfo();
+
+                for (Loop *L : LI)
+                {
+                }
+                */
+
+                // The below code prevents all ASan instrumentation entirely
+                /*
+                for (BasicBlock &BB : F)
+                {
+                    for (Instruction &Inst : BB)
+                    {
+                        LLVMContext &context = Inst.getContext();
+                        MDNode *nosanitize = MDNode::get(context, MDString::get(context, "nosanitize"));
+                        Inst.setMetadata(LLVMContext::MD_nosanitize, nosanitize);
+                    }
+                }
+                */
             }
 
             return true;
