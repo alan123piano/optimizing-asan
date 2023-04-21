@@ -1,19 +1,42 @@
 #include <stdio.h>
 
-void set_ptr(int *ptr)
+void set_ptr(int *yabo, bool b, int ddd)
 {
+    char w[10];
+    w[0] = 4;
+    int lll = *yabo;
+    int *x;
+    int zzz = ddd;
     // set_ptr top
-    *ptr = 10;
-    if (*ptr % 2 == 0)
+    if (b)
     {
         // set_ptr branch
-        *ptr = 11;
+        x = yabo;
+	int y = *x;
     }
+    else
+    {
+	x = yabo;
+	int y = *x;
+    }
+    int *ptr3 = x;
+    int y = *ptr3;
+}
+
+int f2()
+{
+	char j = 0;
+	int w[10];
+	for(int i=0; i < 10; ++i)
+	{
+		w[i] = 45;
+	}
+	return w[0];
 }
 
 int main()
 {
-    int *num = new int(5);
-    set_ptr(num);
-    return 0;
+	char x[2];
+	int y = x[3];
+	return 0;
 }
