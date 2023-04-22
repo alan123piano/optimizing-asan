@@ -7,6 +7,7 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AliasSetTracker.h"
@@ -97,18 +98,19 @@ namespace
 		
 		//AAResults &AAResult = getAnalysis<AAResultsWrapperPass>().getAAResults();
 		//DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-		//ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-		//LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+		ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+		LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 
-		/*for (auto &L : LI)
+		for (auto &L : LI)
 		{
 			errs() << "yabo\n";
-			if(!L->isCanonical(SE))
+			/*if(!L->isCanonical(SE))
 			{
 				continue;
-			}
+			}*/
+			errs() << L->isRotatedForm() << "\n";
 			errs() << "yabo2\n";
-			for(auto &bb : L->blocks())
+			/*for(auto &bb : L->blocks())
 			{
 				for(auto &inst : *bb)
 				{
@@ -126,8 +128,8 @@ namespace
 						scev->print(errs());
 					}
 				}
-			}
-		}*/
+			}*/
+		}
 		
 		//Possible better algorithm 
 		//It would Use a lot of memory and maybe it is not worth it
@@ -143,6 +145,11 @@ namespace
 
 		for(BasicBlock &BB : F)
 		{
+			//Just give up if there is any freeing of memory
+			if(BB.hasName() && BB.getName().startswith(StringRef("delete")))
+			{
+				break;
+			}
 			for(Instruction &I : BB)
 			{
 				//THIS IS LESS TERRIBLE
