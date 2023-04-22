@@ -34,21 +34,21 @@ void set_ptr(int *yabo, int *qabo, bool b)
 
 int main()
 {
-	int *p = new int[4];
-	for(int i=0; i<4; ++i)
+	int p[4];
+	for(int i=0; i<4; i++)
 	{
-		p[i] = i+6;
+		p[i] = i;
 	}
 
-	int *lll = new int;
-	*lll = 4444444;
+	//int *lll = new int;
+	//*lll = 4444444;
 	/*void *y = __asan_region_is_poisoned(p, 4*sizeof(int));
 	if(y != nullptr)
 	{
 		printf("bad\n");
 	}*/
-	delete[] p;
-	delete lll;
+	//delete[] p;
+	//delete lll;
 
 	
 	return 0;

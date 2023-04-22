@@ -12,6 +12,8 @@
 #include "llvm/Analysis/AliasSetTracker.h"
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/IVDescriptors.h"
 
 using namespace llvm;
 
@@ -29,7 +31,7 @@ namespace
 	    AU.addRequired<DominatorTreeWrapperPass>();
 	    AU.addRequired<PostDominatorTreeWrapperPass>();
 	    AU.addRequired<ScalarEvolutionWrapperPass>();
-            //AU.addRequired<LoopInfoWrapperPass>(); // TODO: try to cleverly hoist instrumentation from loops
+            AU.addRequired<LoopInfoWrapperPass>(); // TODO: try to cleverly hoist instrumentation from loops
         }
 
 	unsigned get_width(Instruction *inst)
@@ -94,11 +96,39 @@ namespace
 		errs().write_escaped(F.getName()) << '\n';
 		
 		//AAResults &AAResult = getAnalysis<AAResultsWrapperPass>().getAAResults();
-		DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+		//DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 		//ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-		
-		
+		//LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 
+		/*for (auto &L : LI)
+		{
+			errs() << "yabo\n";
+			if(!L->isCanonical(SE))
+			{
+				continue;
+			}
+			errs() << "yabo2\n";
+			for(auto &bb : L->blocks())
+			{
+				for(auto &inst : *bb)
+				{
+					if(auto gep = dyn_cast<GetElementPtrInst>(&inst))
+					{
+						errs() << "yabo3\n";
+						//if(gep->getNumIndices() != 1)
+						{
+							continue;
+						}//
+						errs() << "yabo4\n";
+						auto idx = gep->idx_begin();
+						++idx;
+						const SCEV *scev = SE.getSCEV(*idx);
+						scev->print(errs());
+					}
+				}
+			}
+		}*/
+		
 		//Possible better algorithm 
 		//It would Use a lot of memory and maybe it is not worth it
 		//Forward BFS for BB, where ptr_group[BB][v] = union of ptr_group[P][v] for predecessors P of BB
@@ -143,16 +173,16 @@ namespace
 				
 					if(p1->getType()->isPointerTy())
 					{
-						if(!foundP1 && !foundP2)
+						if(!foundP2)
 						{
 							ptr_group[p1] = mem_group.size();
 							ptr_group[p2] = mem_group.size();
 							mem_group.push_back(std::vector<Instruction*>());
 						}
-						else if(foundP1 && !foundP2)
-						{
-							ptr_group[p2] = ptr_group[p1];
-						}
+						//else if(foundP1 && !foundP2)
+						//{
+						//	ptr_group[p2] = ptr_group[p1];
+						//}
 						else if(!foundP1 && foundP2)
 						{
 							ptr_group[p2] = -1;
@@ -166,10 +196,10 @@ namespace
 					{
 						mem_group[ptr_group[p2]].push_back(&I); 
 					}
-					/*else if(ptr_group.find(p1) != ptr_group.end() && ptr_group[p1] != -1)
-					{
-						mem_group[ptr_group[p1]].push_back(&I);
-					}*/
+					//else if(ptr_group.find(p1) != ptr_group.end() && ptr_group[p1] != -1)
+					//{
+					//	mem_group[ptr_group[p1]].push_back(&I);
+					//}
 				}
 			}
 		}
@@ -216,16 +246,7 @@ namespace
 			}
 		}
 
-		
-		/*
-		LoopInfoWrapperPass &LIWP = getAnalysis<LoopInfoWrapperPass>(F);
-		LoopInfo &LI = LIWP.getLoopInfo();
-
-		for (Loop *L : LI)
-		{
-		}
-		*/
-
+	
 
 		return true;
         }
