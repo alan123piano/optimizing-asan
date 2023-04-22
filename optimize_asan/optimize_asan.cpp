@@ -11,6 +11,7 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AliasSetTracker.h"
 #include "llvm/Analysis/MemoryLocation.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 
 using namespace llvm;
 
@@ -27,8 +28,36 @@ namespace
             AU.addRequired<AAResultsWrapperPass>();
 	    AU.addRequired<DominatorTreeWrapperPass>();
 	    AU.addRequired<PostDominatorTreeWrapperPass>();
+	    AU.addRequired<ScalarEvolutionWrapperPass>();
             //AU.addRequired<LoopInfoWrapperPass>(); // TODO: try to cleverly hoist instrumentation from loops
         }
+
+	unsigned get_width(Instruction *inst)
+	{
+		Type *t;
+		if(inst->getOpcode() == Instruction::Load)
+		{
+			t = inst->getType();
+		}
+		else
+		{
+			t = inst->getOperand(0)->getType();
+		}
+
+		if(t->isIntegerTy())
+		{
+			return t->getIntegerBitWidth();
+		}
+		else if(t->isFloatTy())
+		{
+			return 32;
+		}
+		else if(t->isDoubleTy())
+		{
+			return 64;
+		}
+		return 0;
+	}
 
 	//Source: LLVM version 16
 	Instruction *findNearestCommonDominator(DominatorTree &DT, Instruction *I1, Instruction *I2)
@@ -59,47 +88,26 @@ namespace
 		return DomBB->getTerminator();
 	}
 
-	bool ptr_inst(Instruction* inst)
-	{
-		if(!inst->getType()->isVoidTy() && !inst->getType()->isPointerTy())
-		{
-			return false;
-		}
-		for(unsigned i = 0; i < inst->getNumOperands(); ++i)
-		{
-			if(!inst->getOperand(i)->getType()->isPointerTy())
-			{
-				return false;
-			}
-		}
-		return true;
-	}
-
-	/*int find_group(AliasAnalysis &AAResult, std::vector<std::list<Instruction*>> &mem_group, MemoryLocation &memloc)
-	{
-		for(unsigned i = 0; i<mem_group.size(); ++i)
-		{
-			for(auto &inst: mem_group[i])
-			{
-				MemoryLocation loc = MemoryLocation::get(inst);
-				if(inst == memloc.Ptr || AAResult.alias(loc, memloc) == AliasResult::MustAlias)
-				{
-					return i;
-				}				
-			}
-		}
-		return -1;
-	}*/
-
         bool runOnFunction(Function &F) override
         {
 		errs() << "Running OptimizeASan pass on ";
 		errs().write_escaped(F.getName()) << '\n';
 		
-		AAResults &AAResult = getAnalysis<AAResultsWrapperPass>().getAAResults();
+		//AAResults &AAResult = getAnalysis<AAResultsWrapperPass>().getAAResults();
 		DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-		PostDominatorTree &PDT = getAnalysis<PostDominatorTreeWrapperPass>().getPostDomTree();
-		std::vector<std::list<Instruction*>> mem_group;
+		//ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+		
+		
+
+		//Possible better algorithm 
+		//It would Use a lot of memory and maybe it is not worth it
+		//Forward BFS for BB, where ptr_group[BB][v] = union of ptr_group[P][v] for predecessors P of BB
+		//In BB, if new v has never been seen ptr_group[BB][v] = {id}
+		//Once at exit BB reverse map Int -> Value
+		//Add checks at each Int by finding common dominator of each Value
+		//std::unordered_map<BasicBlock*, std::unordered_map<Value*,std::unordered_set<int>>> ptr_group;
+
+		std::vector<std::vector<Instruction*>> mem_group;
 		std::unordered_map<Value*, int> ptr_group;
 		
 
@@ -107,179 +115,104 @@ namespace
 		{
 			for(Instruction &I : BB)
 			{
-				//THIS IS TERRIBLE
+				//THIS IS LESS TERRIBLE
 				if(I.getOpcode() == Instruction::Load)
 				{
 					Value *addr = I.getOperand(0);
-					if(ptr_group.find(addr) == ptr_group.end() || ptr_group[addr] == -1)
+					if(ptr_group.find(addr) == ptr_group.end())
 					{
-						std::list<Instruction*> y;
-						y.push_back(&I);
-						mem_group.push_back(y);
+						ptr_group[addr] = mem_group.size();
+						mem_group.push_back(std::vector<Instruction*>());
 					}
-					else
+
+					if(I.getType()->isPointerTy())
+					{
+						ptr_group[&I] = ptr_group[addr];
+					}
+					if(ptr_group[addr] != -1)
 					{
 						mem_group[ptr_group[addr]].push_back(&I);
-						if(I.getType()->isPointerTy())
-						{
-							ptr_group[&I] = ptr_group[addr];
-						}
 					}
 				}
 				else if(I.getOpcode() == Instruction::Store)
 				{
 					Value *p1 = I.getOperand(0);
 					Value *p2 = I.getOperand(1);
-				
 					bool foundP1 = ptr_group.find(p1) != ptr_group.end();
 					bool foundP2 = ptr_group.find(p2) != ptr_group.end();
-
-					if(!foundP1 && !foundP2)
+				
+					if(p1->getType()->isPointerTy())
 					{
-						std::list<Instruction*> y;
-						y.push_back(&I);
-						ptr_group[p2] = mem_group.size();
-						mem_group.push_back(y);
+						if(!foundP1 && !foundP2)
+						{
+							ptr_group[p1] = mem_group.size();
+							ptr_group[p2] = mem_group.size();
+							mem_group.push_back(std::vector<Instruction*>());
+						}
+						else if(foundP1 && !foundP2)
+						{
+							ptr_group[p2] = ptr_group[p1];
+						}
+						else if(!foundP1 && foundP2)
+						{
+							ptr_group[p2] = -1;
+						}
+						else if(foundP1 && foundP2 && ptr_group[p2] != ptr_group[p1])
+						{
+							ptr_group[p2] = -1;
+						}
 					}
-					else if(!foundP1 && !p1->getType()->isPointerTy() && foundP2 && ptr_group[p2] != -1)
+					if(ptr_group.find(p2) != ptr_group.end() && ptr_group[p2] != -1)
 					{
-						mem_group[ptr_group[p2]].push_back(&I);
+						mem_group[ptr_group[p2]].push_back(&I); 
 					}
-					else if(foundP1 && ptr_group[p1] != -1 && !foundP2)
+					/*else if(ptr_group.find(p1) != ptr_group.end() && ptr_group[p1] != -1)
 					{
 						mem_group[ptr_group[p1]].push_back(&I);
-						ptr_group[p2] = ptr_group[p1];
-					}
-					else if(foundP1 && ptr_group[p1] != -1 && foundP2 && ptr_group[p2] == ptr_group[p1])
-					{
-						mem_group[ptr_group[p1]].push_back(&I);
-					}
-					else
-					{
-						ptr_group[p2] = -1;
-					}
+					}*/
 				}
 			}
 		}
-		
-		/*for(BasicBlock &BB : F)
-		{
-			for(Instruction &inst : BB)
-			{
-				Optional<MemoryLocation> memlocopt = MemoryLocation::getOrNone(&inst);
-				if(memlocopt != None)
-
-				{
-					MemoryLocation memloc = *memlocopt;
-					int group = find_group(AAResult, mem_group, memloc);
-					if(group != -1)
-					{
-						mem_group[group].push_back(&inst);
-					}
-					else
-					{
-						std::list<Instruction*> y;
-						y.push_back(&inst);
-						mem_group.push_back(y);
-					}
-				}
-			}
-		}*/
-
+			
 		errs() << "Size of mem_group=" << mem_group.size() << "\n";
-		for(auto &list : mem_group)
+		for(unsigned i=0; i<mem_group.size(); ++i)
 		{
-			errs() << "Size of val=" << list.size() << "\n";
-			auto it = list.begin();
-			/*while(it != list.end())
-			{
-				if(ptr_inst(*it))
-				{
-					it = list.erase(it);
-				}
-				else
-				{
-					++it;
-				}
-			}*/
-			it = list.begin();
-			while(it != list.end())
+			errs() << "Size of val=" << mem_group[i].size() << "\n";
+			auto it = mem_group[i].begin();
+			while(it != mem_group[i].end())
 			{
 				(*it)->print(errs());
 				errs() << "\n";
 				++it;
 			}
-
 		}
-
+		
 		for(auto &list : mem_group)
 		{
-			Instruction *common_dominator = list.front();
-			unsigned max_width = 32;
-			if(list.size() <= 1)
+			Instruction *top = list.front();
+			if(list.size() == 1 && top->getOpcode() == Instruction::Load)
 			{
 				continue;
 			}
+			
+			unsigned max_width = 0;
 			for(auto &inst : list)
 			{
-				common_dominator = findNearestCommonDominator(DT, common_dominator, inst);
-
-				Type *t;
-				if(inst->getOpcode() == Instruction::Load)
+				unsigned width = get_width(inst);
+				if(max_width < width)
 				{
-					t = inst->getType();
+					max_width = width;
 				}
-				else
-				{
-					t = inst->getOperand(0)->getType();
-				}
-				if(t->isIntegerTy())
-				{
-					unsigned width = t->getIntegerBitWidth();
-					if(max_width < width)
-					{
-						max_width = width;
-					}
-				}
-				else if(t->isFloatTy() && max_width < 32)
-				{
-					max_width = 32;
-				}
-				else if(t->isDoubleTy() && max_width < 64)
-				{
-					max_width = 64;
-				}
-				
 				LLVMContext &context = inst->getContext();
 				MDNode *nosanitize = MDNode::get(context, MDString::get(context, "nosanitize"));
 				inst->setMetadata(LLVMContext::MD_nosanitize, nosanitize);
 			}
 			if(max_width != 0)
 			{
-				LLVMContext &context = common_dominator->getContext();
-				Type *ty = Type::getIntNTy(context, max_width);
-				Instruction *front = list.front();
-				if(front->getOpcode() == Instruction::Load)
-				{
-					Value *ptr = front->getOperand(0);
-					new LoadInst(ty, ptr, Twine(""), common_dominator);
-				}
-				else
-				{
-					if(front->getOperand(0)->getType()->isPointerTy())
-					{
-						Value *ptr = front->getOperand(0);
-						new LoadInst(ty, ptr, Twine(""), common_dominator);	
-					}
-					else if(!front->getOperand(0)->hasName())
-					{
-						Value *ptr = front->getOperand(1);
-						new LoadInst(ty, ptr, Twine(""), common_dominator);
-					}
-				}
-				errs() << "CD=\n";
-				common_dominator->print(errs());
-				errs() << "\n";
+				LLVMContext &context = top->getContext();
+				Type *ty = Type::getIntNTy(context, max_width);	
+				Value *ptr = top->getOperand(0);
+				new LoadInst(ty, ptr, Twine(""), top);
 			}
 		}
 
