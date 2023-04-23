@@ -6,23 +6,23 @@ int set_ptr(int **yabo, int **qabo, bool b)
 	int *x;
 	*qabo = *yabo;
 	int y = 0;
-    // set_ptr top
-    if (b)
-    {
-        // set_ptr branch
-        x = *yabo;
-	y = *x;
-	*x = 45;
-    }
-    else
-    {
-	x = *qabo;
-	y = *x;
-	*x = 750;
-    }
-    int *ptr3 = x;
-    y = *ptr3;
-    return y;
+	// set_ptr top
+	if (b)
+	{
+		// set_ptr branch
+		x = *yabo;
+		y = *x;
+		*x = 45;
+	}
+	else
+	{
+		x = *qabo;
+		y = *x;
+		*x = 750;
+	}
+	int *ptr3 = x;
+	y = *ptr3;
+	return y;
 }
 
 /*int f2()
@@ -53,7 +53,7 @@ int main()
 	int *p = new int(4);
 	int *q = new int(9);
 
-	//set_ptr(p, q, true);
+	// set_ptr(p, q, true);
 
 	printf("%d\n", *q);
 	delete p;
@@ -69,19 +69,17 @@ int main()
 	}
 	delete[] d;
 	delete r;*/
-	
+
 	//*d = 4444444;
-	//int *lll = new int;
+	// int *lll = new int;
 	//*lll = 4444444;
 	/*void *y = __asan_region_is_poisoned(p, 4*sizeof(int));
 	if(y != nullptr)
 	{
 		printf("bad\n");
 	}*/
-	//delete[] p;
-	//delete lll;
+	// delete[] p;
+	// delete lll;
 
-	
 	return 0;
 }
-
