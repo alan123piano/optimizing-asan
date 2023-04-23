@@ -112,8 +112,12 @@ namespace
 		ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
 		LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 
-		/*for (auto &L : LI)
+		for (auto &L : LI)
 		{
+			if(!L->isCanoncial())
+			{
+				continue;
+			}
 			errs() << "yabo\n";
 			for(auto &bb : L->blocks())
 			{
@@ -130,25 +134,10 @@ namespace
 						const SCEV *scevGep = SE.getSCEV(gep);
 						scevGep->print(errs());
 						errs() << "\n";
-						if(auto ld = dyn_cast<LoadInst>(gep->getPointerOperand()))
-						{
-							SE.getSCEV(ld->getOperand(0))->print(errs());
-							//Check it is invariant
-							
-						}
-						errs() << "\n";
-						if(auto sInst = dyn_cast<SExtInst>(*(gep->idx_begin())))
-						{
-							if(auto ld = dyn_cast<LoadInst>(sInst->getOperand(0)))
-							{
-								SE.getSCEV(ld->getOperand(0))->print(errs());	
-							}
-						}
-						errs() << "\n";
 					}
 				}
 			}
-		}*/
+		}
 		
 		//Possible better algorithm 
 		//It would Use a lot of memory and maybe it is not worth it
@@ -184,10 +173,6 @@ namespace
 						ptr_group[addr] = mem_group.size();
 						std::vector<Instruction*> v;
 						mem_group.push_back(v);
-					}
-					if(I.getOpcode() == Instruction::Load && I.getType()->isPointerTy())
-					{
-						ptr_group[&I] = ptr_group[addr];
 					}
 					if(ptr_group[addr] != -1)
 					{
