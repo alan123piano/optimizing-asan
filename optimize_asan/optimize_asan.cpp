@@ -114,7 +114,7 @@ namespace
 
 		for (auto &L : LI)
 		{
-			if(!L->isCanoncial())
+			if(!L->isCanonical(SE))
 			{
 				continue;
 			}
