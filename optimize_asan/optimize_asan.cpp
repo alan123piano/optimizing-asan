@@ -34,6 +34,17 @@ namespace
 	    AU.addRequired<ScalarEvolutionWrapperPass>();
             AU.addRequired<LoopInfoWrapperPass>(); // TODO: try to cleverly hoist instrumentation from loops
         }
+	
+	void eliminate_mem(std::unordered_map<Value*, int> &ptr_group, int m)
+	{
+		for(auto &[v, x] : ptr_group)
+		{
+			if(x == m)
+			{
+				x = -1;
+			}
+		}
+	}
 
 	unsigned get_width(Instruction *inst)
 	{
@@ -62,35 +73,6 @@ namespace
 		return 0;
 	}
 
-	//Source: LLVM version 16
-	Instruction *findNearestCommonDominator(DominatorTree &DT, Instruction *I1, Instruction *I2)
-	{
-		BasicBlock *BB1 = I1->getParent();
-		BasicBlock *BB2 = I2->getParent();
-		if(BB1 == BB2)
-		{
-			return I1->comesBefore(I2) ? I1 : I2;
-		}
-		if(!DT.isReachableFromEntry(BB2))
-		{
-			return I1;
-		}
-		if(!DT.isReachableFromEntry(BB1))
-		{
-			return I2;
-		}
-		BasicBlock *DomBB = DT.findNearestCommonDominator(BB1, BB2);
-		if(BB1 == DomBB)
-		{
-			return I1;
-		}
-		if(BB2 == DomBB)
-		{
-			return I2;
-		}
-		return DomBB->getTerminator();
-	}
-
         bool runOnFunction(Function &F) override
         {
 		errs() << "Running OptimizeASan pass on ";
@@ -108,7 +90,7 @@ namespace
 			{
 				continue;
 			}*/
-			errs() << L->isRotatedForm() << "\n";
+			errs() << L->isCanonical(SE) << "\n";
 			errs() << "yabo2\n";
 			/*for(auto &bb : L->blocks())
 			{
@@ -139,17 +121,12 @@ namespace
 		//Add checks at each Int by finding common dominator of each Value
 		//std::unordered_map<BasicBlock*, std::unordered_map<Value*,std::unordered_set<int>>> ptr_group;
 
-		std::vector<std::vector<Instruction*>> mem_group;
+		/*std::vector<std::vector<Instruction*>> mem_group;
 		std::unordered_map<Value*, int> ptr_group;
 		
 
 		for(BasicBlock &BB : F)
 		{
-			//Just give up if there is any freeing of memory
-			if(BB.hasName() && BB.getName().startswith(StringRef("delete")))
-			{
-				break;
-			}
 			for(Instruction &I : BB)
 			{
 				//THIS IS LESS TERRIBLE
@@ -208,6 +185,21 @@ namespace
 					//	mem_group[ptr_group[p1]].push_back(&I);
 					//}
 				}
+				else if(auto callInst = dyn_cast<CallInst>(&I))
+				{
+					//callInst->print(errs());
+					//errs() << "\n";
+					for(auto &v : callInst->args())
+					{
+						//v->print(errs());
+						if(ptr_group.find(v) != ptr_group.end() && ptr_group[v] != -1)
+						{
+							eliminate_mem(ptr_group, ptr_group[v]);
+						}
+						//errs() << ", ";
+					}
+					//errs() << "\n";
+				}
 			}
 		}
 			
@@ -251,9 +243,7 @@ namespace
 				Value *ptr = top->getOperand(0);
 				new LoadInst(ty, ptr, Twine(""), top);
 			}
-		}
-
-	
+		}*/
 
 		return true;
         }

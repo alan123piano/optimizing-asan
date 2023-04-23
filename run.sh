@@ -27,9 +27,10 @@ case "$1" in
         cmake --build .
         ;;
     "test")
-        clang -Xclang -disable-O0-optnone -emit-llvm $2.cpp -c -o $2.llvmbc
-	opt -passes='loop-rotate' $2.llvmbc -o $2.out.llvmbc
-	mv $2.out.llvmbc $2.llvmbc
+	clang -emit-llvm $2.cpp -c -o $2.llvmbc
+	#clang -Xclang -disable-O0-optnone -emit-llvm  $2.cpp -c -o $2.llvmbc
+	#opt -passes='lcssa' $2.llvmbc -o $2.out.llvmbc
+	#mv $2.out.llvmbc $2.llvmbc
         if [ "$RUN_OPT_ASAN" -eq 1 ]; then
             opt -enable-new-pm=0 -load build/optimize_asan/LLVMPJT_OPTIMIZE_ASAN.so -optimize_asan < $2.llvmbc > $2.out.llvmbc
             mv $2.out.llvmbc $2.llvmbc

@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <sanitizer/asan_interface.h>
 
-/*void set_ptr(int *yabo, int *qabo, bool b)
+int set_ptr(int *yabo, int *qabo, bool b)
 {
 	int *x;
 	int y = 0;
@@ -14,14 +14,15 @@
     }
     else
     {
-	x = yabo;
+	x = qabo;
 	y = *x;
     }
     int *ptr3 = x;
     y = *ptr3;
-}*/
+    return y;
+}
 
-int f2()
+/*int f2()
 {
 	int w[10];
 	for(int i=0; i < 10; ++i)
@@ -29,30 +30,28 @@ int f2()
 		w[i] = 45;
 	}
 	return w[0];
-}
+}*/
 
 int main()
 {
 	int p[4];
-	int i = 0;
 	for(int i=0; i<4; ++i)
 	{
 		p[i] = i;
+		printf("p[%d]=%d", i, p[i]);
 	}
-	printf("p=%d", p[0]);
 
-	int *r = new int(7777);
+	/*int *r = new int(7777);
 	int *d = new int[4];
 	d[0] = 55;
 	for(int i=0; i<4; ++i)
 	{
 		d[i] = i;
 	}
-	printf("d=%d", d[0]);
 	delete[] d;
-	delete r;
+	delete r;*/
 	
-	*d = 4444444;
+	//*d = 4444444;
 	//int *lll = new int;
 	//*lll = 4444444;
 	/*void *y = __asan_region_is_poisoned(p, 4*sizeof(int));
