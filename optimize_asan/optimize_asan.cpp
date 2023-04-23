@@ -72,6 +72,35 @@ namespace
 		}
 		return 0;
 	}
+	
+	//Source: LLVM version 16
+	Instruction *findNearestCommonDominator(DominatorTree &DT, Instruction *I1, Instruction *I2)
+	{
+		BasicBlock *BB1 = I1->getParent();
+		BasicBlock *BB2 = I2->getParent();
+		if(BB1 == BB2)
+		{
+			return I1->comesBefore(I2) ? I1 : I2;
+		}
+		if(!DT.isReachableFromEntry(BB2))
+		{
+			return I1;
+		}
+		if(!DT.isReachableFromEntry(BB1))
+		{
+			return I2;
+		}
+		BasicBlock *DomBB = DT.findNearestCommonDominator(BB1, BB2);
+		if(BB1 == DomBB)
+		{
+			return I1;
+		}
+		if(BB2 == DomBB)
+		{
+			return I2;
+		}
+		return DomBB->getTerminator();
+	}
 
         bool runOnFunction(Function &F) override
         {
@@ -79,39 +108,47 @@ namespace
 		errs().write_escaped(F.getName()) << '\n';
 		
 		//AAResults &AAResult = getAnalysis<AAResultsWrapperPass>().getAAResults();
-		//DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+		DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 		ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
 		LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 
-		for (auto &L : LI)
+		/*for (auto &L : LI)
 		{
 			errs() << "yabo\n";
-			/*if(!L->isCanonical(SE))
-			{
-				continue;
-			}*/
-			errs() << L->isCanonical(SE) << "\n";
-			errs() << "yabo2\n";
-			/*for(auto &bb : L->blocks())
+			for(auto &bb : L->blocks())
 			{
 				for(auto &inst : *bb)
 				{
 					if(auto gep = dyn_cast<GetElementPtrInst>(&inst))
 					{
 						errs() << "yabo3\n";
-						//if(gep->getNumIndices() != 1)
+						if(gep->getNumIndices() != 1)
 						{
 							continue;
-						}//
+						}
 						errs() << "yabo4\n";
-						auto idx = gep->idx_begin();
-						++idx;
-						const SCEV *scev = SE.getSCEV(*idx);
-						scev->print(errs());
+						const SCEV *scevGep = SE.getSCEV(gep);
+						scevGep->print(errs());
+						errs() << "\n";
+						if(auto ld = dyn_cast<LoadInst>(gep->getPointerOperand()))
+						{
+							SE.getSCEV(ld->getOperand(0))->print(errs());
+							//Check it is invariant
+							
+						}
+						errs() << "\n";
+						if(auto sInst = dyn_cast<SExtInst>(*(gep->idx_begin())))
+						{
+							if(auto ld = dyn_cast<LoadInst>(sInst->getOperand(0)))
+							{
+								SE.getSCEV(ld->getOperand(0))->print(errs());	
+							}
+						}
+						errs() << "\n";
 					}
 				}
-			}*/
-		}
+			}
+		}*/
 		
 		//Possible better algorithm 
 		//It would Use a lot of memory and maybe it is not worth it
@@ -121,7 +158,7 @@ namespace
 		//Add checks at each Int by finding common dominator of each Value
 		//std::unordered_map<BasicBlock*, std::unordered_map<Value*,std::unordered_set<int>>> ptr_group;
 
-		/*std::vector<std::vector<Instruction*>> mem_group;
+		std::vector<std::vector<Instruction*>> mem_group;
 		std::unordered_map<Value*, int> ptr_group;
 		
 
@@ -129,17 +166,26 @@ namespace
 		{
 			for(Instruction &I : BB)
 			{
-				//THIS IS LESS TERRIBLE
-				if(I.getOpcode() == Instruction::Load)
+				bool b1 = I.getOpcode() == Instruction::Load;
+			       	bool b2 = I.getOpcode() == Instruction::Store;
+				if(b1 || b2)
 				{
-					Value *addr = I.getOperand(0);
+					Value *addr;
+					if(b1)
+					{
+						addr = I.getOperand(0);
+					}
+					else
+					{
+						addr = I.getOperand(1);
+					}
 					if(ptr_group.find(addr) == ptr_group.end())
 					{
 						ptr_group[addr] = mem_group.size();
-						mem_group.push_back(std::vector<Instruction*>());
+						std::vector<Instruction*> v;
+						mem_group.push_back(v);
 					}
-
-					if(I.getType()->isPointerTy())
+					if(I.getOpcode() == Instruction::Load && I.getType()->isPointerTy())
 					{
 						ptr_group[&I] = ptr_group[addr];
 					}
@@ -147,43 +193,6 @@ namespace
 					{
 						mem_group[ptr_group[addr]].push_back(&I);
 					}
-				}
-				else if(I.getOpcode() == Instruction::Store)
-				{
-					Value *p1 = I.getOperand(0);
-					Value *p2 = I.getOperand(1);
-					bool foundP1 = ptr_group.find(p1) != ptr_group.end();
-					bool foundP2 = ptr_group.find(p2) != ptr_group.end();
-				
-					if(p1->getType()->isPointerTy())
-					{
-						if(!foundP2)
-						{
-							ptr_group[p1] = mem_group.size();
-							ptr_group[p2] = mem_group.size();
-							mem_group.push_back(std::vector<Instruction*>());
-						}
-						//else if(foundP1 && !foundP2)
-						//{
-						//	ptr_group[p2] = ptr_group[p1];
-						//}
-						else if(!foundP1 && foundP2)
-						{
-							ptr_group[p2] = -1;
-						}
-						else if(foundP1 && foundP2 && ptr_group[p2] != ptr_group[p1])
-						{
-							ptr_group[p2] = -1;
-						}
-					}
-					if(ptr_group.find(p2) != ptr_group.end() && ptr_group[p2] != -1)
-					{
-						mem_group[ptr_group[p2]].push_back(&I); 
-					}
-					//else if(ptr_group.find(p1) != ptr_group.end() && ptr_group[p1] != -1)
-					//{
-					//	mem_group[ptr_group[p1]].push_back(&I);
-					//}
 				}
 				else if(auto callInst = dyn_cast<CallInst>(&I))
 				{
@@ -218,10 +227,15 @@ namespace
 		
 		for(auto &list : mem_group)
 		{
-			Instruction *top = list.front();
-			if(list.size() == 1 && top->getOpcode() == Instruction::Load)
+			if(list.size() == 1)
 			{
 				continue;
+			}
+
+			Instruction *cdom = list.front();
+			for(auto & inst : list)
+			{
+				cdom = findNearestCommonDominator(DT, inst, cdom);
 			}
 			
 			unsigned max_width = 0;
@@ -238,12 +252,20 @@ namespace
 			}
 			if(max_width != 0)
 			{
-				LLVMContext &context = top->getContext();
+				LLVMContext &context = cdom->getContext();
 				Type *ty = Type::getIntNTy(context, max_width);	
-				Value *ptr = top->getOperand(0);
-				new LoadInst(ty, ptr, Twine(""), top);
+				Value *ptr;
+				if(list.front()->getOpcode() == Instruction::Load)
+				{
+					ptr = list.front()->getOperand(0);
+				}
+				else
+				{
+					ptr = list.front()->getOperand(1);
+				}
+				new LoadInst(ty, ptr, Twine(""), cdom);
 			}
-		}*/
+		}
 
 		return true;
         }
