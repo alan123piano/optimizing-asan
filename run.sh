@@ -6,7 +6,7 @@ set -Eeuo pipefail
 # o = run OptimizeASan pass
 VIEW_BYTECODE=0
 RUN_OPT_ASAN=0
-while getopts "bao" opt; do
+while getopts "bo" opt; do
     case $opt in
         b)
             VIEW_BYTECODE=1
