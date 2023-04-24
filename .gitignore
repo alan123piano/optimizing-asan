@@ -3,4 +3,5 @@ build
 *.bc
 *.exe
 *.profdata
+*.pdf
 default.profraw
