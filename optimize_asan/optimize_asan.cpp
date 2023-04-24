@@ -1,18 +1,21 @@
 #include <vector>
 #include <list>
 #include <utility>
+#include <unordered_set>
 #include "llvm/Pass.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/ConstantRange.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AliasSetTracker.h"
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/IVDescriptors.h"
 
@@ -35,6 +38,21 @@ namespace
             AU.addRequired<LoopInfoWrapperPass>(); // TODO: try to cleverly hoist instrumentation from loops
         }
 	
+
+	void no_sanitize_gep(Value *gep, MDNode *nosanitize)
+	{
+		for(auto u : gep->users())
+		{
+			if(auto inst = dyn_cast<Instruction>(u))
+			{
+				if(inst->getOpcode() == Instruction::Load || inst->getOpcode() == Instruction::Store)
+				{
+					inst->setMetadata(LLVMContext::MD_nosanitize, nosanitize);
+				}
+			}
+		}
+	}
+
 	void eliminate_mem(std::unordered_map<Value*, int> &ptr_group, int m)
 	{
 		for(auto &[v, x] : ptr_group)
@@ -112,28 +130,101 @@ namespace
 		ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
 		LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 
+		LLVMContext &context = F.getContext();
+		MDNode *nosanitize = MDNode::get(context, MDString::get(context, "nosanitize"));
+
 		for (auto &L : LI)
 		{
 			if(!L->isCanonical(SE))
 			{
 				continue;
 			}
-			errs() << "yabo\n";
-			for(auto &bb : L->blocks())
+			
+			BasicBlock *preheader = L->getLoopPreheader();
+			long long finalIVVal;
+			Optional<Loop::LoopBounds> option = L->getBounds(SE);
+			if(option != None)
 			{
-				for(auto &inst : *bb)
+				Loop::LoopBounds bounds = *option;
+				errs() << bounds.getInitialIVValue() << "\n";
+				errs() << bounds.getFinalIVValue() << "\n";
+				if(auto ci = dyn_cast<ConstantInt>(&bounds.getFinalIVValue()))
 				{
-					if(auto gep = dyn_cast<GetElementPtrInst>(&inst))
+					finalIVVal = ci->getSExtValue() - 1;
+					errs() << finalIVVal << "\n";
+					if(finalIVVal == -1)
 					{
-						errs() << "yabo3\n";
-						if(gep->getNumIndices() != 1)
+						continue;
+					}
+				}
+				else
+				{
+					continue;
+				}
+			}
+			else
+			{
+				continue;
+			}
+			//Just look at the first basic block because it would
+			//get complicated with branches
+			BasicBlock *BB = *(L->block_begin());
+			for(auto &inst : *BB)
+			{
+				//Give up if there is a branch
+				if(auto gep = dyn_cast<GetElementPtrInst>(&inst))
+				{
+					if(gep->getNumIndices() != 1)
+					{
+						continue;
+					}
+					const SCEV *scevGep = SE.getSCEV(gep);
+					if(auto scevGepADD = dyn_cast<SCEVAddRecExpr>(scevGep))
+					{
+						errs() << "woop\n";
+						scevGepADD->print(errs());
+						errs() << "\n";
+						if(scevGepADD->getStart()->getExpressionSize() != 1)
 						{
 							continue;
 						}
-						errs() << "yabo4\n";
-						const SCEV *scevGep = SE.getSCEV(gep);
-						scevGep->print(errs());
+						//check invariant
+						Value *ptr = gep->getOperand(0);
+						ptr->print(errs());
 						errs() << "\n";
+						if(!L->isLoopInvariant(ptr))
+						{
+							continue;
+						}
+						
+						//gives us size
+						const SCEV *step = scevGepADD->getStepRecurrence(SE);
+						step->print(errs());
+						errs() << "\n";
+
+						long long size;
+						if(auto ci = dyn_cast<SCEVConstant>(step))
+						{
+							size = ci->getValue()->getSExtValue();
+						}
+						else
+						{
+							continue;
+						}
+
+						//sanitize instructions that use gep
+						no_sanitize_gep(gep, nosanitize);
+						//insert %a = gep i8 p size*finalIVValue
+						Type *i32 = Type::getInt32Ty(context);	
+						Value *offset = ConstantInt::get(i32, size*finalIVVal);
+						Type *ty = Type::getInt8Ty(context);	
+						Value *idx = GetElementPtrInst::CreateInBounds(ty, ptr, ArrayRef(offset), Twine(""), preheader->getTerminator());
+						//insert load i8 %a
+						new LoadInst(ty, idx, Twine(""), preheader->getTerminator());
+					}
+					else
+					{
+						continue;
 					}
 				}
 			}
@@ -188,7 +279,8 @@ namespace
 						//v->print(errs());
 						if(ptr_group.find(v) != ptr_group.end() && ptr_group[v] != -1)
 						{
-							eliminate_mem(ptr_group, ptr_group[v]);
+							ptr_group[v] = -1;
+							//eliminate_mem(ptr_group, ptr_group[v]);
 						}
 						//errs() << ", ";
 					}
@@ -231,8 +323,6 @@ namespace
 				{
 					max_width = width;
 				}
-				LLVMContext &context = inst->getContext();
-				MDNode *nosanitize = MDNode::get(context, MDString::get(context, "nosanitize"));
 				inst->setMetadata(LLVMContext::MD_nosanitize, nosanitize);
 			}
 			if(max_width != 0)

@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <sanitizer/asan_interface.h>
 
+//void *__asan_region_is_poisoned(void *beg, size_t size);
+
 int set_ptr(int **yabo, int **qabo, bool b)
 {
 	int *x;
@@ -43,23 +45,14 @@ int main()
 		p[i] = i;
 	}
 	delete[] p;*/
-	/*int *p = new int[4];
-	for(int i=0; i<4; ++i)
+	int *p = new int[10];
+	for(int i=0; i<11; ++i)
 	{
 		p[i] = i;
 	}
-	delete[] p;*/
+	delete[] p;
 
-	int *p = new int(4);
-	int *q = new int(9);
 
-	//set_ptr(p, q, true);
-
-	printf("%d\n", *q);
-	delete p;
-	delete q;
-
-	*p = 54444;
 	/*int *r = new int(7777);
 	int *d = new int[4];
 	d[0] = 55;
