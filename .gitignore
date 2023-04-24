@@ -1,4 +1,6 @@
 build
 .vscode
-*.llvmbc
+*.bc
 *.exe
+*.profdata
+default.profraw
