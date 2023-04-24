@@ -176,10 +176,6 @@ namespace
 				//Give up if there is a branch
 				if(auto gep = dyn_cast<GetElementPtrInst>(&inst))
 				{
-					if(gep->getNumIndices() != 1)
-					{
-						continue;
-					}
 					const SCEV *scevGep = SE.getSCEV(gep);
 					if(auto scevGepADD = dyn_cast<SCEVAddRecExpr>(scevGep))
 					{

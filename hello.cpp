@@ -3,22 +3,24 @@
 
 //void *__asan_region_is_poisoned(void *beg, size_t size);
 
-int set_ptr(int **yabo, int **qabo, bool b)
+int set_ptr(int *yabo, int *qabo, bool b)
 {
+
 	int *x;
-	*qabo = *yabo;
+	qabo = yabo;
 	int y = 0;
+	(*yabo)++;
     // set_ptr top
     if (b)
     {
         // set_ptr branch
-        x = *yabo;
+        x = yabo;
 	y = *x;
 	*x = 45;
     }
     else
     {
-	x = *qabo;
+	x = qabo;
 	y = *x;
 	*x = 750;
     }
@@ -45,12 +47,11 @@ int main()
 		p[i] = i;
 	}
 	delete[] p;*/
-	int *p = new int[10];
+	char p[10];
 	for(int i=0; i<11; ++i)
 	{
 		p[i] = i;
 	}
-	delete[] p;
 
 
 	/*int *r = new int(7777);
