@@ -8,7 +8,7 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/ConstantRange.h"
+#include "llvm/IR/InstrTypes.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/AliasAnalysis.h"
@@ -132,6 +132,13 @@ namespace
 
 		LLVMContext &context = F.getContext();
 		MDNode *nosanitize = MDNode::get(context, MDString::get(context, "nosanitize"));
+		
+		Module *M = F.getParent();
+		std::vector<Type*> params = {Type::getInt32PtrTy(context), Type::getInt64Ty(context)};
+		FunctionType *fty = FunctionType::get(Type::getInt32PtrTy(context), ArrayRef<Type*>(params), false);
+		auto callee = M->getOrInsertFunction("__asan_region_is_poisoned", fty, AttributeList());
+		Value *arip = callee.getCallee();
+		arip->print(errs());
 
 		for (auto &L : LI)
 		{
@@ -141,21 +148,16 @@ namespace
 			}
 			
 			BasicBlock *preheader = L->getLoopPreheader();
+			BasicBlock *ppheader = preheader->splitBasicBlock(preheader->getTerminator(), "", true);
+			BasicBlock *header = L->getHeader();
 			long long finalIVVal;
 			Optional<Loop::LoopBounds> option = L->getBounds(SE);
 			if(option != None)
 			{
 				Loop::LoopBounds bounds = *option;
-				errs() << bounds.getInitialIVValue() << "\n";
-				errs() << bounds.getFinalIVValue() << "\n";
 				if(auto ci = dyn_cast<ConstantInt>(&bounds.getFinalIVValue()))
 				{
-					finalIVVal = ci->getSExtValue() - 1;
-					errs() << finalIVVal << "\n";
-					if(finalIVVal == -1)
-					{
-						continue;
-					}
+					finalIVVal = ci->getSExtValue();
 				}
 				else
 				{
@@ -181,17 +183,12 @@ namespace
 					const SCEV *scevGep = SE.getSCEV(gep);
 					if(auto scevGepADD = dyn_cast<SCEVAddRecExpr>(scevGep))
 					{
-						errs() << "woop\n";
-						scevGepADD->print(errs());
-						errs() << "\n";
 						if(scevGepADD->getStart()->getExpressionSize() != 1)
 						{
 							continue;
 						}
 						//check invariant
 						Value *ptr = gep->getOperand(0);
-						ptr->print(errs());
-						errs() << "\n";
 						if(!L->isLoopInvariant(ptr))
 						{
 							continue;
@@ -199,8 +196,6 @@ namespace
 						
 						//gives us size
 						const SCEV *step = scevGepADD->getStepRecurrence(SE);
-						step->print(errs());
-						errs() << "\n";
 
 						long long size;
 						if(auto ci = dyn_cast<SCEVConstant>(step))
@@ -214,13 +209,26 @@ namespace
 
 						//sanitize instructions that use gep
 						no_sanitize_gep(gep, nosanitize);
-						//insert %a = gep i8 p size*finalIVValue
-						Type *i32 = Type::getInt32Ty(context);	
-						Value *offset = ConstantInt::get(i32, size*finalIVVal);
-						Type *ty = Type::getInt8Ty(context);	
-						Value *idx = GetElementPtrInst::CreateInBounds(ty, ptr, ArrayRef(offset), Twine(""), preheader->getTerminator());
-						//insert load i8 %a
-						new LoadInst(ty, idx, Twine(""), preheader->getTerminator());
+						
+						Type *i64 = Type::getInt64Ty(context);	
+						Value *offset = ConstantInt::get(i64, size*finalIVVal);
+						//call __asan_region_is_poison
+						std::vector<Value*> args = {ptr, offset};
+						Value *callRes = CallInst::Create(fty, arip, ArrayRef<Value*>(args), Twine(""), ppheader->getTerminator());
+						
+						//create basic block
+						BasicBlock *checkBlock = BasicBlock::Create(context, Twine("__poison_check"), &F);
+						Type *ty = Type::getIntNTy(context, size*8);
+						//insert load and branch instruction
+						new LoadInst(ty, callRes, Twine(""), checkBlock);
+						BranchInst::Create(preheader, checkBlock);
+							
+						//insert cmp and br instruction at preheader
+						Value *cpn = ConstantPointerNull::get(Type::getInt32PtrTy(context));
+						
+						Value *cond = new ICmpInst(ppheader->getTerminator(), CmpInst::ICMP_EQ, callRes, cpn, Twine(""));
+						BranchInst::Create(preheader, checkBlock, cond, ppheader->getTerminator());
+						ppheader->getTerminator()->eraseFromParent();
 					}
 					else
 					{
@@ -349,3 +357,4 @@ namespace
 
 char OptimizeASan::ID = 0;
 static RegisterPass<OptimizeASan> X("optimize_asan", "Optimize ASan", false, false);
+
