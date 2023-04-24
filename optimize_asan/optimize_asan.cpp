@@ -231,6 +231,7 @@ namespace
 						max_width = width;
 					}
 					LLVMContext &context = inst->getContext();
+					errs() << "ADDING NOSANITIZE\n";
 					MDNode *nosanitize = MDNode::get(context, MDString::get(context, "nosanitize"));
 					inst->setMetadata(LLVMContext::MD_nosanitize, nosanitize);
 				}
@@ -250,6 +251,15 @@ namespace
 					new LoadInst(ty, ptr, Twine(""), cdom);
 				}
 			}
+
+			/**
+			 * Loop optimization: This optimization will move ASan
+			 * instrumentation code off of the frequent path and onto the
+			 * infrequent path for basic loops.
+			 *
+			 * We also need to unroll the loop once for correctness (so we can
+			 * always instrument the first access).
+			 */
 
 			return true;
 		}
