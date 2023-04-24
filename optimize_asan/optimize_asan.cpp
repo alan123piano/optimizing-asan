@@ -2,6 +2,7 @@
 #include <list>
 #include <utility>
 #include <unordered_set>
+#include <unordered_map>
 #include "llvm/Pass.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/PassManager.h"
@@ -13,6 +14,8 @@
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AliasSetTracker.h"
+#include "llvm/Analysis/BlockFrequencyInfo.h"
+#include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
@@ -35,21 +38,8 @@ namespace
 			AU.addRequired<DominatorTreeWrapperPass>();
 			AU.addRequired<PostDominatorTreeWrapperPass>();
 			AU.addRequired<ScalarEvolutionWrapperPass>();
-			AU.addRequired<LoopInfoWrapperPass>(); // TODO: try to cleverly hoist instrumentation from loops
-		}
-
-		void no_sanitize_gep(Value *gep, MDNode *nosanitize)
-		{
-			for (auto u : gep->users())
-			{
-				if (auto inst = dyn_cast<Instruction>(u))
-				{
-					if (inst->getOpcode() == Instruction::Load || inst->getOpcode() == Instruction::Store)
-					{
-						inst->setMetadata(LLVMContext::MD_nosanitize, nosanitize);
-					}
-				}
-			}
+			AU.addRequired<BranchProbabilityInfoWrapperPass>();
+			AU.addRequired<LoopInfoWrapperPass>();
 		}
 
 		void eliminate_mem(std::unordered_map<Value *, int> &ptr_group, int m)
@@ -117,6 +107,77 @@ namespace
 				return I2;
 			}
 			return DomBB->getTerminator();
+		}
+
+		BasicBlock *getLikelySuccessor(BasicBlock *bb)
+		{
+			BranchProbabilityInfo &bpi = getAnalysis<BranchProbabilityInfoWrapperPass>().getBPI();
+
+			BranchProbability maxProbability;
+			BasicBlock *likelySucc = nullptr;
+
+			for (BasicBlock *succ : successors(bb))
+			{
+				BranchProbability probability = bpi.getEdgeProbability(bb, succ);
+				if (!likelySucc || probability >= maxProbability)
+				{
+					maxProbability = probability;
+					likelySucc = succ;
+				}
+			}
+
+			assert(likelySucc);
+			return likelySucc;
+		}
+
+		// return A - B
+		template <typename T>
+		std::vector<T> setDifference(std::vector<T> &A, std::vector<T> &B)
+		{
+			std::unordered_set<T> BSet(B.begin(), B.end());
+			std::vector<T> diff;
+			for (const T &val : A)
+			{
+				if (BSet.find(val) == BSet.end())
+				{
+					diff.push_back(val);
+				}
+			}
+			return diff;
+		}
+
+		std::vector<LoadInst *> getLoads(std::vector<BasicBlock *> &blocks)
+		{
+			std::vector<LoadInst *> loads;
+			for (BasicBlock *bb : blocks)
+			{
+				for (Instruction &inst : *bb)
+				{
+					LoadInst *loadInst = dyn_cast<LoadInst>(&inst);
+					if (loadInst)
+					{
+						loads.push_back(loadInst);
+					}
+				}
+			}
+			return loads;
+		}
+
+		std::vector<StoreInst *> getStores(std::vector<BasicBlock *> &blocks)
+		{
+			std::vector<StoreInst *> stores;
+			for (BasicBlock *bb : blocks)
+			{
+				for (Instruction &inst : *bb)
+				{
+					StoreInst *storeInst = dyn_cast<StoreInst>(&inst);
+					if (storeInst)
+					{
+						stores.push_back(storeInst);
+					}
+				}
+			}
+			return stores;
 		}
 
 		bool runOnFunction(Function &F) override
@@ -212,7 +273,17 @@ namespace
 							}
 
 							// sanitize instructions that use gep
-							no_sanitize_gep(gep, nosanitize);
+							for (auto u : gep->users())
+							{
+								if (auto inst = dyn_cast<Instruction>(u))
+								{
+									if (inst->getOpcode() == Instruction::Load || inst->getOpcode() == Instruction::Store)
+									{
+										errs() << "Setting NOSANITIZE\n";
+										inst->setMetadata(LLVMContext::MD_nosanitize, nosanitize);
+									}
+								}
+							}
 							// insert %a = gep i8 p size*finalIVValue
 							Type *i32 = Type::getInt32Ty(context);
 							Value *offset = ConstantInt::get(i32, size * finalIVVal);
@@ -321,6 +392,7 @@ namespace
 					{
 						max_width = width;
 					}
+					errs() << "Setting NOSANITIZE\n";
 					inst->setMetadata(LLVMContext::MD_nosanitize, nosanitize);
 				}
 				if (max_width != 0)
@@ -348,6 +420,105 @@ namespace
 			 * We also need to unroll the loop once for correctness (so we can
 			 * always instrument the first access).
 			 */
+			for (Loop *L : LI)
+			{
+				BasicBlock *header = L->getHeader();
+
+				// capture all BBs in loop
+				std::vector<BasicBlock *> loopBlocks;
+				{
+					std::unordered_set<BasicBlock *> visited;
+					std::vector<BasicBlock *> stack;
+					stack.push_back(header);
+					while (!stack.empty())
+					{
+						BasicBlock *top = stack.back();
+						stack.pop_back();
+						if (!visited.insert(top).second)
+						{
+							continue;
+						}
+						for (BasicBlock *succ : successors(top))
+						{
+							if (L->contains(succ))
+							{
+								stack.push_back(succ);
+							}
+						}
+					}
+					loopBlocks = std::vector<BasicBlock *>(visited.begin(), visited.end());
+				}
+
+				// populate trace by following frequent path
+				std::vector<BasicBlock *> traceBlocks;
+				{
+					BasicBlock *curr = header;
+					do
+					{
+						assert(L->contains(curr));
+						traceBlocks.push_back(curr);
+						curr = getLikelySuccessor(curr);
+					} while (curr != header);
+				}
+
+				std::vector<BasicBlock *> infrequentBlocks = setDifference(loopBlocks, traceBlocks);
+
+				// find almost-invariant loads in trace, along with the associated stores
+				std::unordered_map<
+					Value *,
+					std::pair<
+						std::unordered_set<LoadInst *>,
+						std::unordered_set<StoreInst *>>>
+					almostInvariantLoads;
+				for (LoadInst *load : getLoads(traceBlocks))
+				{
+					bool dependsOnFrequentStore = false;
+					for (StoreInst *store : getStores(traceBlocks))
+					{
+						if (store->getPointerOperand() == load->getPointerOperand())
+						{
+							dependsOnFrequentStore = true;
+							break;
+						}
+					}
+
+					std::vector<StoreInst *> stores;
+					for (StoreInst *store : getStores(infrequentBlocks))
+					{
+						if (store->getPointerOperand() == load->getPointerOperand())
+						{
+							stores.push_back(store);
+						}
+					}
+
+					if (!dependsOnFrequentStore && !stores.empty())
+					{
+						auto &pair = almostInvariantLoads[load->getPointerOperand()];
+						pair.first.insert(load);
+						pair.second.insert(stores.begin(), stores.end());
+					}
+				}
+
+				// loop over almost invariant loads
+				for (auto &p1 : almostInvariantLoads)
+				{
+					Value *value = p1.first;
+					auto &loads = p1.second.first;
+					auto &stores = p1.second.second;
+
+					for (LoadInst *load : loads)
+					{
+						errs() << "AIL\n";
+						load->setMetadata(0, MDNode::get(context, MDString::get(context, "ALMOST INVARIANT LOAD")));
+					}
+
+					for (StoreInst *store : stores)
+					{
+						errs() << "AIS\n";
+						store->setMetadata(0, MDNode::get(context, MDString::get(context, "ALMOST INVARIANT STORE")));
+					}
+				}
+			}
 
 			return true;
 		}
