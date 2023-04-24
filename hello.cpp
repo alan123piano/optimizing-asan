@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include <sanitizer/asan_interface.h>
+#include <stdlib.h>
 
 int set_ptr(int **yabo, int **qabo, bool b)
 {
@@ -50,14 +50,16 @@ int main()
 	}
 	delete[] p;*/
 
-	int *p = new int(4);
-	int *q = new int(9);
+	int *p = (int *)malloc(sizeof(int));
+	*p = 4;
+	int *q = (int *)malloc(sizeof(int));
+	*q = 9;
 
 	// set_ptr(p, q, true);
 
 	printf("%d\n", *q);
-	delete p;
-	delete q;
+	free(p);
+	free(q);
 
 	*p = 54444;
 	/*int *r = new int(7777);
