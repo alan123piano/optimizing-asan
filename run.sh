@@ -38,7 +38,7 @@ clang -fprofile-instr-generate -x ir $TESTCASE.prof.bc -o $TESTCASE.prof.exe
 
 # Run profiler-embedded executable, which generates a default.profraw file.
 # We discard the output into /dev/null.
-./$TESTCASE.prof.exe > /dev/null
+./$TESTCASE.prof.exe ~ > /dev/null
 
 # Convert profiling data into LLVM form.
 llvm-profdata merge -o $TESTCASE.profdata default.profraw
