@@ -53,6 +53,10 @@ opt -passes="pgo-instr-use" -o $TESTCASE.bc -pgo-test-profile-file=$TESTCASE.pro
 opt -mem2reg $TESTCASE.bc -o $TESTCASE.out.bc
 mv $TESTCASE.out.bc $TESTCASE.bc
 
+# Run loop-rotate.
+opt -loop-rotate $TESTCASE.bc -o $TESTCASE.out.bc
+mv $TESTCASE.out.bc $TESTCASE.bc
+
 if [ "$RUN_OPT_ASAN" -eq 1 ]; then
     # Run OptimizeASan.
     opt -enable-new-pm=0 -load build/optimize_asan/LLVMPJT_OPTIMIZE_ASAN.so -optimize_asan < $TESTCASE.bc > $TESTCASE.out.bc
@@ -71,4 +75,3 @@ else
     clang -lasan -x ir $TESTCASE.bc -o $TESTCASE.exe
     time ./$TESTCASE.exe > /dev/null
 fi
-;;
