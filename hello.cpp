@@ -1,7 +1,7 @@
 #include <stdio.h>
-#include <sanitizer/asan_interface.h>
+#include <stdlib.h>
 
-//void *__asan_region_is_poisoned(void *beg, size_t size);
+// void *__asan_region_is_poisoned(void *beg, size_t size);
 
 void foo(int *ptr)
 {
@@ -54,13 +54,13 @@ int main()
 		p[i] = i;
 	}
 	delete[] p;*/
-	char p[10];
-	p[0] = p[0] + 1; 
-	for(int i=0; i<11; ++i)
+	int *p = (int *)malloc(sizeof(int) * 10);
+	for (int i = 0; i < 11; ++i)
 	{
 		++p[i];
 	}
 
+	free(p);
 
 	/*int *r = new int(7777);
 	int *d = new int[4];
@@ -71,19 +71,17 @@ int main()
 	}
 	delete[] d;
 	delete r;*/
-	
+
 	//*d = 4444444;
-	//int *lll = new int;
+	// int *lll = new int;
 	//*lll = 4444444;
 	/*void *y = __asan_region_is_poisoned(p, 4*sizeof(int));
 	if(y != nullptr)
 	{
 		printf("bad\n");
 	}*/
-	//delete[] p;
-	//delete lll;
+	// delete[] p;
+	// delete lll;
 
-	
 	return 0;
 }
-
