@@ -7,11 +7,15 @@ set -Eeuo pipefail
 # b = view LLVM bytecode
 # o = run OptimizeASan pass
 VIEW_BYTECODE=0
+RUN_ASAN=0
 RUN_OPT_ASAN=0
-while getopts "bo" opt; do
+while getopts "bao" opt; do
     case $opt in
         b)
             VIEW_BYTECODE=1
+            ;;
+        a)
+            RUN_ASAN=1
             ;;
         o)
             RUN_OPT_ASAN=1
@@ -63,9 +67,11 @@ if [ "$RUN_OPT_ASAN" -eq 1 ]; then
     mv $TESTCASE.out.bc $TESTCASE.bc
 fi
 
-# Run ASan instrumentation.
-opt -enable-new-pm=0 -load build/asan/LLVMPJT_ASAN.so -asan < $TESTCASE.bc > $TESTCASE.out.bc
-mv $TESTCASE.out.bc $TESTCASE.bc
+if [ "$RUN_ASAN" -eq 1 ]; then
+    # Run ASan instrumentation.
+    opt -enable-new-pm=0 -load build/asan/LLVMPJT_ASAN.so -asan < $TESTCASE.bc > $TESTCASE.out.bc
+    mv $TESTCASE.out.bc $TESTCASE.bc
+fi
 
 if [ "$VIEW_BYTECODE" -eq 1 ]; then
     # Show bytecode.
