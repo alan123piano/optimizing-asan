@@ -21,6 +21,8 @@
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/IVDescriptors.h"
+#include "llvm/Analysis/DependenceAnalysis.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 using namespace llvm;
 
@@ -40,6 +42,7 @@ namespace
 			AU.addRequired<ScalarEvolutionWrapperPass>();
 			AU.addRequired<BranchProbabilityInfoWrapperPass>();
 			AU.addRequired<LoopInfoWrapperPass>();
+			AU.addRequired<DependenceAnalysisWrapperPass>();
 		}
 
 		void eliminate_mem(std::unordered_map<Value *, int> &ptr_group, int m)
@@ -126,8 +129,14 @@ namespace
 				}
 			}
 
-			assert(likelySucc);
-			return likelySucc;
+			if (maxProbability >= BranchProbability(4, 5))
+			{
+				return likelySucc;
+			}
+			else
+			{
+				return nullptr;
+			}
 		}
 
 		// return A - B
@@ -144,6 +153,23 @@ namespace
 				}
 			}
 			return diff;
+		}
+
+		// return A + B
+		template <typename Base, typename DerivedA, typename DerivedB>
+		std::vector<Base> setUnion(const std::vector<DerivedA> &A, const std::vector<DerivedB> &B)
+		{
+			std::unordered_set<Base> union_set;
+			for (const DerivedA &V : A)
+			{
+				union_set.insert(static_cast<Base>(V));
+			}
+			for (const DerivedB &V : B)
+			{
+				union_set.insert(static_cast<Base>(V));
+			}
+			std::vector<Base> vec(union_set.begin(), union_set.end());
+			return vec;
 		}
 
 		std::vector<LoadInst *> getLoads(std::vector<BasicBlock *> &blocks)
@@ -180,6 +206,316 @@ namespace
 			return stores;
 		}
 
+		Instruction *getDef(Value *V, Function &F)
+		{
+			for (BasicBlock &BB : F)
+			{
+				for (Instruction &I : BB)
+				{
+					if (dyn_cast<Value>(&I) == V)
+					{
+						return &I;
+					}
+				}
+			}
+			return nullptr;
+		}
+
+		std::vector<Instruction *> getDeps(Instruction *inst, Function &F)
+		{
+			std::unordered_set<Instruction *> deps;
+			for (BasicBlock &BB : F)
+			{
+				for (Instruction &I : BB)
+				{
+					// follow use-chains and check if there's a path to inst
+					std::unordered_set<Instruction *> visited;
+					std::vector<Instruction *> stack;
+					stack.push_back(&I);
+
+					while (!stack.empty())
+					{
+						Instruction *top = stack.back();
+						stack.pop_back();
+						if (top == inst)
+						{
+							// we found a path to inst
+							deps.insert(&I);
+							break;
+						}
+						if (!visited.insert(top).second)
+							continue;
+						for (User *U : top->users())
+						{
+							Instruction *userInst = dyn_cast<Instruction>(U);
+							if (!userInst)
+								continue;
+							stack.push_back(userInst);
+						}
+					}
+				}
+			}
+			return std::vector<Instruction *>(deps.begin(), deps.end());
+		}
+
+		void removeBlocksFromPhi(PHINode *phi, BasicBlock *block)
+		{
+			for (unsigned int i = 0; i < phi->getNumIncomingValues(); ++i)
+			{
+				if (phi->getIncomingBlock(i) == block)
+				{
+					phi->removeIncomingValue(i);
+					--i;
+				}
+			}
+		}
+
+		void frequentPathOptimization(Function &F)
+		{
+			/**
+			 * Loop optimization: This optimization will move ASan
+			 * instrumentation code off of the frequent path and onto the
+			 * infrequent path for basic loops.
+			 *
+			 * We also need to unroll the loop once for correctness (so we can
+			 * always instrument the first access).
+			 */
+
+			LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+
+			LLVMContext &context = F.getContext();
+			MDNode *nosanitize = MDNode::get(context, MDString::get(context, "nosanitize"));
+
+			for (Loop *L : LI)
+			{
+				BasicBlock *header = L->getHeader();
+
+				// capture all BBs in loop
+				std::vector<BasicBlock *> loopBlocks;
+				{
+					std::unordered_set<BasicBlock *> visited;
+					std::vector<BasicBlock *> stack;
+					stack.push_back(header);
+					while (!stack.empty())
+					{
+						BasicBlock *top = stack.back();
+						stack.pop_back();
+						if (!visited.insert(top).second)
+						{
+							continue;
+						}
+						for (BasicBlock *succ : successors(top))
+						{
+							if (L->contains(succ))
+							{
+								stack.push_back(succ);
+							}
+						}
+					}
+					loopBlocks = std::vector<BasicBlock *>(visited.begin(), visited.end());
+				}
+
+				// populate trace by following frequent path
+				std::vector<BasicBlock *> traceBlocks;
+				{
+					BasicBlock *curr = header;
+					do
+					{
+						assert(L->contains(curr));
+						traceBlocks.push_back(curr);
+						curr = getLikelySuccessor(curr);
+					} while (curr != header);
+				}
+
+				std::vector<BasicBlock *> infrequentBlocks = setDifference(loopBlocks, traceBlocks);
+
+				for (BasicBlock *block : traceBlocks)
+				{
+					for (Instruction &I : *block)
+					{
+						I.setMetadata("TRACE", MDNode::get(context, MDString::get(context, "TRACE")));
+					}
+				}
+
+				for (BasicBlock *block : infrequentBlocks)
+				{
+					for (Instruction &I : *block)
+					{
+						I.setMetadata("INFREQ", MDNode::get(context, MDString::get(context, "INFREQ")));
+					}
+				}
+
+				// find memory instructions in trace whose addresses depend on infrequently-changed addresses
+				std::vector<Instruction *> memInsts = setUnion<Instruction *>(getStores(traceBlocks), getLoads(traceBlocks));
+				std::unordered_set<BasicBlock *> infreqDepBlocks;
+				std::unordered_set<Instruction *> noSanitizeMemInsts;
+
+				for (Instruction *memInst : memInsts)
+				{
+					Value *ptr = nullptr;
+					if (StoreInst *store = dyn_cast<StoreInst>(memInst))
+					{
+						ptr = store->getPointerOperand();
+					}
+					else if (LoadInst *load = dyn_cast<LoadInst>(memInst))
+					{
+						ptr = load->getPointerOperand();
+					}
+
+					Instruction *ptrInst = getDef(ptr, F);
+					if (!ptrInst)
+						continue;
+
+					errs() << "Found memory instruction\n";
+					errs() << *memInst << "\n";
+
+					// check if the ptrInst dependends on infrequent path
+					Instruction *infreqDep = nullptr;
+					std::vector<Instruction *> deps = getDeps(ptrInst, F);
+					for (Instruction *dep : deps)
+					{
+						errs() << "Dep: " << *dep << "\n";
+						bool isInfreq = false;
+						for (BasicBlock *infreqBlock : infrequentBlocks)
+						{
+							if (dep->getParent() == infreqBlock)
+							{
+								isInfreq = true;
+								break;
+							}
+						}
+
+						if (isInfreq)
+						{
+							infreqDep = dep;
+							break;
+						}
+					}
+					if (!infreqDep)
+						continue;
+
+					// only perform the optimization if the dependency is in a block immediately preceding the memory instruction
+					// the dependency block also needs to only have one successor (so we can duplicate the successor with the instrumentation)
+					BasicBlock *depBlock = infreqDep->getParent();
+					BasicBlock *memBlock = memInst->getParent();
+					if (depBlock->getSingleSuccessor() != memBlock)
+					{
+						errs() << "Optimization cancelled because of successor requirement\n";
+						continue;
+					}
+
+					errs() << "Performing frequent-path loop optimization\n";
+
+					infreqDepBlocks.insert(depBlock);
+					noSanitizeMemInsts.insert(memInst);
+				}
+
+				// re-add instrumentation for infreq deps by duplicating their successors
+				for (BasicBlock *depBlock : infreqDepBlocks)
+				{
+					ValueToValueMapTy vmap;
+
+					BasicBlock *memBlock = depBlock->getSingleSuccessor();
+					if (memBlock)
+						continue;
+					assert(memBlock);
+
+					BasicBlock *dupMemBlock = CloneBasicBlock(memBlock, vmap, "", &F);
+
+					// make depBlock branch into dupMemBlock
+					BranchInst *br = dyn_cast<BranchInst>(depBlock->getTerminator());
+					for (unsigned int i = 0; i < br->getNumSuccessors(); ++i)
+					{
+						if (br->getSuccessor(i) == memBlock)
+						{
+							br->setSuccessor(i, dupMemBlock);
+						}
+					}
+
+					// fix phi stuff in dupMemBlock
+					for (Instruction &I : *dupMemBlock)
+					{
+						if (PHINode *phi = dyn_cast<PHINode>(&I))
+						{
+							errs() << "PHI BEFORE: " << *phi << "\n";
+							for (BasicBlock *pred : predecessors(memBlock))
+							{
+								if (pred != depBlock)
+								{
+									removeBlocksFromPhi(phi, pred);
+								}
+							}
+							errs() << "PHI AFTER: " << *phi << "\n";
+						}
+					}
+
+					// fix phi stuff in successors
+					for (BasicBlock *succ : successors(dupMemBlock))
+					{
+						for (Instruction &I : *succ)
+						{
+							if (PHINode *phi = dyn_cast<PHINode>(&I))
+							{
+								Value *originalValue = phi->getIncomingValueForBlock(memBlock);
+								Value *mappedValue = vmap[originalValue];
+								phi->addIncoming(mappedValue, dupMemBlock);
+							}
+						}
+					}
+
+					// iterate through successors
+					/* auto it = std::next(block->getIterator());
+					BasicBlock *lastBlock = *(L->getBlocks().rbegin());
+					while (&*it != &*lastBlock)
+					{
+						BasicBlock *curr = &*it;
+						BasicBlock *clone = CloneBasicBlock(curr, vmap);
+						// curr->getSinglePredecessor()->replaceSuccessorsPhiUsesWith();
+
+						// replace all branches into curr into branches into clone
+						for (BasicBlock *pred : predecessors(curr))
+						{
+							BranchInst *br = dyn_cast<BranchInst>(pred->getTerminator());
+							assert(br);
+							for (unsigned int i = 0; i < br->getNumSuccessors(); ++i)
+							{
+							}
+						}
+						++it;
+					} */
+				}
+
+				// disable instrumentation on selected mem insts
+				for (Instruction *inst : noSanitizeMemInsts)
+				{
+					// inst->setMetadata(LLVMContext::MD_nosanitize, nosanitize);
+				}
+			}
+		}
+
+		void invariantAddressOptimization(Function &F)
+		{
+			/**
+			 * Invariant address optimization: If a memory instruction is
+			 * issued to an invariant address w.r.t. the loop, we hoist the
+			 * check into the preheader.
+			 *
+			 * This is useful because classical optimizations can't hoist
+			 * things like stores, and we also don't want to check shadow mem
+			 * each time.
+			 */
+
+			LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+
+			LLVMContext &context = F.getContext();
+			MDNode *nosanitize = MDNode::get(context, MDString::get(context, "nosanitize"));
+
+			for (Loop *L : LI)
+			{
+				// TODO
+			}
+		}
+
 		bool runOnFunction(Function &F) override
 		{
 			errs() << "Running OptimizeASan pass on ";
@@ -189,6 +525,7 @@ namespace
 			DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 			ScalarEvolution &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
 			LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+			DependenceInfo &DI = getAnalysis<llvm::DependenceAnalysisWrapperPass>().getDI();
 
 			LLVMContext &context = F.getContext();
 			MDNode *nosanitize = MDNode::get(context, MDString::get(context, "nosanitize"));
@@ -412,113 +749,8 @@ namespace
 				}
 			}
 
-			/**
-			 * Loop optimization: This optimization will move ASan
-			 * instrumentation code off of the frequent path and onto the
-			 * infrequent path for basic loops.
-			 *
-			 * We also need to unroll the loop once for correctness (so we can
-			 * always instrument the first access).
-			 */
-			for (Loop *L : LI)
-			{
-				BasicBlock *header = L->getHeader();
-
-				// capture all BBs in loop
-				std::vector<BasicBlock *> loopBlocks;
-				{
-					std::unordered_set<BasicBlock *> visited;
-					std::vector<BasicBlock *> stack;
-					stack.push_back(header);
-					while (!stack.empty())
-					{
-						BasicBlock *top = stack.back();
-						stack.pop_back();
-						if (!visited.insert(top).second)
-						{
-							continue;
-						}
-						for (BasicBlock *succ : successors(top))
-						{
-							if (L->contains(succ))
-							{
-								stack.push_back(succ);
-							}
-						}
-					}
-					loopBlocks = std::vector<BasicBlock *>(visited.begin(), visited.end());
-				}
-
-				// populate trace by following frequent path
-				std::vector<BasicBlock *> traceBlocks;
-				{
-					BasicBlock *curr = header;
-					do
-					{
-						assert(L->contains(curr));
-						traceBlocks.push_back(curr);
-						curr = getLikelySuccessor(curr);
-					} while (curr != header);
-				}
-
-				std::vector<BasicBlock *> infrequentBlocks = setDifference(loopBlocks, traceBlocks);
-
-				// find almost-invariant loads in trace, along with the associated stores
-				std::unordered_map<
-					Value *,
-					std::pair<
-						std::unordered_set<LoadInst *>,
-						std::unordered_set<StoreInst *>>>
-					almostInvariantLoads;
-				for (LoadInst *load : getLoads(traceBlocks))
-				{
-					bool dependsOnFrequentStore = false;
-					for (StoreInst *store : getStores(traceBlocks))
-					{
-						if (store->getPointerOperand() == load->getPointerOperand())
-						{
-							dependsOnFrequentStore = true;
-							break;
-						}
-					}
-
-					std::vector<StoreInst *> stores;
-					for (StoreInst *store : getStores(infrequentBlocks))
-					{
-						if (store->getPointerOperand() == load->getPointerOperand())
-						{
-							stores.push_back(store);
-						}
-					}
-
-					if (!dependsOnFrequentStore && !stores.empty())
-					{
-						auto &pair = almostInvariantLoads[load->getPointerOperand()];
-						pair.first.insert(load);
-						pair.second.insert(stores.begin(), stores.end());
-					}
-				}
-
-				// loop over almost invariant loads
-				for (auto &p1 : almostInvariantLoads)
-				{
-					Value *value = p1.first;
-					auto &loads = p1.second.first;
-					auto &stores = p1.second.second;
-
-					for (LoadInst *load : loads)
-					{
-						errs() << "AIL\n";
-						load->setMetadata(0, MDNode::get(context, MDString::get(context, "ALMOST INVARIANT LOAD")));
-					}
-
-					for (StoreInst *store : stores)
-					{
-						errs() << "AIS\n";
-						store->setMetadata(0, MDNode::get(context, MDString::get(context, "ALMOST INVARIANT STORE")));
-					}
-				}
-			}
+			frequentPathOptimization(F);
+			invariantAddressOptimization(F);
 
 			return true;
 		}
