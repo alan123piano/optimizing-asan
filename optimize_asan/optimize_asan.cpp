@@ -250,8 +250,8 @@ namespace
 		{
 			for(Instruction &I : BB)
 			{
-				bool b1 = I.getOpcode() == Instruction::Load;
-			       	bool b2 = I.getOpcode() == Instruction::Store;
+				bool b1 = I.getOpcode() == Instruction::Load && !I.hasMetadata("nosanitize");
+			       	bool b2 = I.getOpcode() == Instruction::Store && !I.hasMetadata("nosanitize");
 				if(b1 || b2)
 				{
 					Value *addr;

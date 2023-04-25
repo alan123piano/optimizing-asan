@@ -3,6 +3,13 @@
 
 //void *__asan_region_is_poisoned(void *beg, size_t size);
 
+void foo(int *ptr)
+{
+	int x = *ptr;
+	if(*ptr % 2 == 0)
+		*ptr = 5;
+}
+
 int set_ptr(int *yabo, int *qabo, bool b)
 {
 
@@ -48,9 +55,10 @@ int main()
 	}
 	delete[] p;*/
 	char p[10];
+	p[0] = p[0] + 1; 
 	for(int i=0; i<11; ++i)
 	{
-		p[i] = i;
+		++p[i];
 	}
 
 
