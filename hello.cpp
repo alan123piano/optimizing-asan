@@ -3,28 +3,37 @@
 
 // void *__asan_region_is_poisoned(void *beg, size_t size);
 
-int set_ptr(int **yabo, int **qabo, bool b)
+void foo(int *ptr)
 {
+	int x = *ptr;
+	if(*ptr % 2 == 0)
+		*ptr = 5;
+}
+
+int set_ptr(int *yabo, int *qabo, bool b)
+{
+
 	int *x;
-	*qabo = *yabo;
+	qabo = yabo;
 	int y = 0;
-	// set_ptr top
-	if (b)
-	{
-		// set_ptr branch
-		x = *yabo;
-		y = *x;
-		*x = 45;
-	}
-	else
-	{
-		x = *qabo;
-		y = *x;
-		*x = 750;
-	}
-	int *ptr3 = x;
-	y = *ptr3;
-	return y;
+	(*yabo)++;
+    // set_ptr top
+    if (b)
+    {
+        // set_ptr branch
+        x = yabo;
+	y = *x;
+	*x = 45;
+    }
+    else
+    {
+	x = qabo;
+	y = *x;
+	*x = 750;
+    }
+    int *ptr3 = x;
+    y = *ptr3;
+    return y;
 }
 
 /*int f2()
@@ -48,8 +57,9 @@ int main()
 	int *p = (int *)malloc(sizeof(int) * 10);
 	for (int i = 0; i < 11; ++i)
 	{
-		p[i] = i;
+		++p[i];
 	}
+
 	free(p);
 
 	/*int *r = new int(7777);
